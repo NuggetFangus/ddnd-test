@@ -1,0 +1,81 @@
+name: DDND Wine+Box64 (ARM64)
+
+# Testa se o Dong Dong Never Die (2D Fighter Maker, exe de Windows) abre em
+# Wine x86_64 (WoW64) rodando sobre Box64, num runner ARM64 de verdade.
+# Box64 é compilado com -DRK3326=ON (o mesmo alvo do R36S: Cortex-A35).
+on:
+  workflow_dispatch:
+    inputs:
+      game_url:
+        description: "URL direta do zip do jogo (você fornece; nada do jogo fica no repositório)"
+        required: true
+      exe:
+        description: "Caminho do exe dentro do zip"
+        default: "GAME.EXE"
+      seconds:
+        description: "Segundos de jogo antes do screenshot"
+        default: "40"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@main
+
+      - name: Dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake python3 xvfb xdotool imagemagick x11-utils unzip xz-utils \
+            libx11-6 libxext6 libxrender1 libfreetype6 libasound2t64 ca-certificates
+
+      - name: Box64 (alvo RK3326)
+        run: |
+          git clone --depth 1 https://github.com/ptitSeb/box64
+          cmake -S box64 -B box64/build -DRK3326=ON -DARM_DYNAREC=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build box64/build -j$(nproc)
+          sudo cmake --install box64/build
+          box64 --version
+
+      - name: Wine x86_64 (Kron4ek, WoW64)
+        run: |
+          url=$(gh api repos/Kron4ek/Wine-Builds/releases --jq '[.[] | select(.prerelease==false)][0].assets[] | select(.name|test("amd64-wow64\\.tar\\.xz$")) | select(.name|test("staging|proton")|not) | .browser_download_url' | head -1)
+          echo "Wine: $url"
+          curl -L "$url" -o wine.tar.xz
+          mkdir -p $HOME/wine && tar -xf wine.tar.xz -C $HOME/wine --strip-components=1
+          ls $HOME/wine/bin | head
+
+      - name: Baixar o jogo
+        run: |
+          mkdir game && curl -L "${{ inputs.game_url }}" -o game.zip
+          unzip -q game.zip -d game
+          find game -maxdepth 3 -iname '*.exe' | head
+
+      - name: Rodar sob Xvfb e capturar
+        run: |
+          export WINEPREFIX=$HOME/pfx WINEDEBUG=-all BOX64_LOG=1 BOX64_DYNAREC_STRONGMEM=1
+          Xvfb :99 -screen 0 640x480x24 & sleep 2
+          export DISPLAY=:99
+          W=$HOME/wine/bin/wine64; [ -x $W ] || W=$HOME/wine/bin/wine
+          box64 $W wineboot -i > boot.log 2>&1 || true
+          cd game
+          EXE=$(find . -iname "$(basename '${{ inputs.exe }}')" | head -1)
+          cd "$(dirname "$EXE")"
+          /usr/bin/time -v box64 $W "$(basename "$EXE")" > ../../run.log 2>&1 &
+          PID=$!
+          sleep 10; import -window root ../../shot_10s.png || true
+          sleep 10; import -window root ../../shot_20s.png || true
+          sleep ${{ inputs.seconds }}; import -window root ../../shot_final.png || true
+          grep -E 'Maximum resident' ../../run.log || true
+          kill $PID 2>/dev/null || true
+          wineserver -k 2>/dev/null || true
+
+      - uses: actions/upload-artifact@main
+        if: always()
+        with:
+          name: ddnd-resultado
+          path: |
+            *.log
+            shot_*.png
