@@ -76,6 +76,15 @@ jobs:
           xwininfo -root -tree | head -20 || true
           sleep 10; import -window root ../shot_20s.png || true
           sleep ${{ inputs.seconds }}; import -window root ../shot_final.png || true
+          # dispensa o diálogo com Enter e captura de novo
+          xdotool key Return; sleep 8; import -window root ../shot_apos_enter.png || true
+          xdotool key Return; sleep 8; import -window root ../shot_apos_enter2.png || true
+          # imprime os screenshots no log (paleta reduzida, base64) para eu conseguir ler sem baixar o artefato
+          for f in ../shot_20s.png ../shot_final.png ../shot_apos_enter.png ../shot_apos_enter2.png; do
+            [ -f "$f" ] || continue
+            convert "$f" -colors 48 -define png:compression-level=9 /tmp/s.png
+            echo "SHOT-BEGIN $(basename $f) $(stat -c %s /tmp/s.png)"; base64 -w0 /tmp/s.png; echo; echo SHOT-END
+          done
           echo "--- processos (final)"; ps -eo pid,rss,etime,cmd | grep -i -E 'wine|box64|game' | grep -v grep | cut -c1-160
           echo "--- RAM total do sistema usada"; free -m | head -2
           cd ..
