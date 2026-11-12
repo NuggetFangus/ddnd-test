@@ -81,7 +81,6 @@ jobs:
           cd ..
           echo "--- boot.log (fim)"; tail -30 ../boot.log 2>/dev/null || tail -30 boot.log
           echo "--- run.log (fim)"; tail -60 run.log
-          mv run.log ../ 2>/dev/null; mv shot_*.png ../ 2>/dev/null; true
           wineserver -k 2>/dev/null || true
 
       - uses: actions/upload-artifact@main
