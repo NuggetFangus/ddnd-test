@@ -50,7 +50,9 @@ jobs:
       - name: Baixar o jogo
         run: |
           mkdir game && curl -L "${{ inputs.game_url }}" -o game.zip
-          unzip -q game.zip -d game
+          # unzip sai com código 1 só por aviso de nomes de arquivo chineses; não é erro
+          unzip -q game.zip -d game || [ $? -eq 1 ]
+          find game -maxdepth 3 | head -40
           find game -maxdepth 3 -iname '*.exe' | head
 
       - name: Rodar sob Xvfb e capturar
