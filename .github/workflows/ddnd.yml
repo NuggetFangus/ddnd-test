@@ -15,6 +15,9 @@ on:
       seconds:
         description: "Segundos de jogo antes do screenshot"
         default: "40"
+      mem_mb:
+        description: "Limite de RAM do teste (MB). 700 simula o R36S; 3000 mede quanto o jogo realmente precisa"
+        default: "700"
 
 jobs:
   test:
@@ -90,7 +93,7 @@ jobs:
           # grupo de controle (cgroup v2) criado à mão: 700 MB, sem swap
           sudo mkdir -p /sys/fs/cgroup/ddnd
           echo "+memory" | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null 2>&1 || true
-          echo 734003200 | sudo tee /sys/fs/cgroup/ddnd/memory.max
+          echo $(( ${{ inputs.mem_mb }} * 1048576 )) | sudo tee /sys/fs/cgroup/ddnd/memory.max
           echo 0 | sudo tee /sys/fs/cgroup/ddnd/memory.swap.max
           U=$(id -un)
           sudo bash -c "echo \$\$ > /sys/fs/cgroup/ddnd/cgroup.procs; exec taskset -c 0 sudo -u $U ./t.sh" || echo "t.sh saiu com $?"
