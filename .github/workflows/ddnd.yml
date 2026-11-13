@@ -62,6 +62,7 @@ jobs:
           W=$HOME/wine/bin/wine64; [ -x $W ] || W=$HOME/wine/bin/wine
           cat > $PWD/t.sh <<SCRIPT
           #!/bin/bash
+          exec > $PWD/t.out 2>&1
           export HOME=$HOME PATH=$PATH WINEPREFIX=$HOME/pfx2 WINEDEBUG=err+all,fixme-all BOX64_LOG=0 BOX64_DYNAREC_STRONGMEM=1
           export WINEDLLOVERRIDES="mscoree,mshtml=" LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 DISPLAY=:99
           cd $PWD
@@ -79,14 +80,23 @@ jobs:
           import -window root $PWD/shot_b.png || true
           echo "--- PSS real somado (MB) de wine/box64/Xvfb"
           tot=0; for p in \$(pgrep -f 'wine|box64|Xvfb|GAME'); do v=\$(awk '/^Pss:/{print \$2}' /proc/\$p/smaps_rollup 2>/dev/null); tot=\$((tot+\${v:-0})); done; echo "PSS total: \$((tot/1024)) MB"
-          cg=/sys/fs/cgroup/system.slice/ddnd.scope
+          cg=/sys/fs/cgroup/ddnd
           echo "cgroup memory.peak: \$(( \$(cat \$cg/memory.peak 2>/dev/null || echo 0) / 1048576 )) MB"; echo "oom: \$(grep -E 'oom|max' \$cg/memory.events 2>/dev/null | tr '\\n' ' ')"
           echo "--- processos"; pgrep -af 'wine|box64|GAME' | wc -l
           echo "--- run.log (fim)"; tail -15 $PWD/run.log
           wineserver -k 2>/dev/null; pkill Xvfb; true
           SCRIPT
           sed -i 's/^          //' t.sh; chmod +x t.sh
-          sudo systemd-run --scope --unit=ddnd --quiet -p MemoryMax=700M -p MemorySwapMax=0 --uid=$(id -u) --gid=$(id -g) taskset -c 0 ./t.sh
+          # grupo de controle (cgroup v2) criado à mão: 700 MB, sem swap
+          sudo mkdir -p /sys/fs/cgroup/ddnd
+          echo "+memory" | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null 2>&1 || true
+          echo 734003200 | sudo tee /sys/fs/cgroup/ddnd/memory.max
+          echo 0 | sudo tee /sys/fs/cgroup/ddnd/memory.swap.max
+          U=$(id -un)
+          sudo bash -c "echo \$\$ > /sys/fs/cgroup/ddnd/cgroup.procs; exec taskset -c 0 sudo -u $U ./t.sh" || echo "t.sh saiu com $?"
+          echo "=== saída do t.sh"; cat t.out
+          echo "--- cgroup final"; cat /sys/fs/cgroup/ddnd/memory.peak /sys/fs/cgroup/ddnd/memory.events 2>&1
+          sudo dmesg 2>/dev/null | grep -i -E 'out of memory|oom-kill|killed process' | tail -5 || true
           for f in shot_a.png shot_b.png; do
             [ -f "$f" ] || continue
             convert "$f" -colors 48 -define png:compression-level=9 /tmp/s.png
