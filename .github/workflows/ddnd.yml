@@ -55,42 +55,43 @@ jobs:
           find game -maxdepth 3 | head -40
           find game -maxdepth 3 -iname '*.exe' | head
 
-      - name: Rodar sob Xvfb e capturar
+      - name: Rodar com limites tipo R36S (1 núcleo, 700 MB, sem swap)
         run: |
-          sudo apt-get install -y locales >/dev/null; sudo locale-gen zh_CN.UTF-8 >/dev/null || true
-          export WINEPREFIX=$HOME/pfx WINEDEBUG=err+all,fixme-all BOX64_LOG=0 BOX64_DYNAREC_STRONGMEM=1
-          export WINEDLLOVERRIDES="mscoree,mshtml="   # sem Mono/Gecko: prefixo bem mais rápido
-          export LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8
-          Xvfb :99 -screen 0 640x480x24 >/dev/null 2>&1 & sleep 2
-          export DISPLAY=:99
+          sudo apt-get install -y locales fonts-wqy-microhei fonts-noto-cjk procps >/dev/null; sudo locale-gen zh_CN.UTF-8 >/dev/null || true
+          fc-cache -f >/dev/null 2>&1 || true
           W=$HOME/wine/bin/wine64; [ -x $W ] || W=$HOME/wine/bin/wine
-          echo "--- wineboot"; date
-          timeout 600 box64 $W wineboot -i > boot.log 2>&1; echo "wineboot exit=$?"; date
-          cd game
-          EXE=$(find . -iname "$(basename '${{ inputs.exe }}')" | head -1)
-          echo "exe: $EXE"
-          cd "$(dirname "$EXE")"
-          ( /usr/bin/time -v box64 $W "$(basename "$EXE")" > ../run.log 2>&1; echo "game exit=$?" >> ../run.log ) &
-          sleep 10; import -window root ../shot_10s.png || true
-          echo "--- processos"; ps -eo pid,rss,etime,cmd | grep -i -E 'wine|box64|game' | grep -v grep | cut -c1-160
-          xwininfo -root -tree | head -20 || true
-          sleep 10; import -window root ../shot_20s.png || true
-          sleep ${{ inputs.seconds }}; import -window root ../shot_final.png || true
-          # dispensa o diálogo com Enter e captura de novo
-          xdotool key Return; sleep 8; import -window root ../shot_apos_enter.png || true
-          xdotool key Return; sleep 8; import -window root ../shot_apos_enter2.png || true
-          # imprime os screenshots no log (paleta reduzida, base64) para eu conseguir ler sem baixar o artefato
-          for f in ../shot_20s.png ../shot_final.png ../shot_apos_enter.png ../shot_apos_enter2.png; do
+          cat > $PWD/t.sh <<SCRIPT
+          #!/bin/bash
+          export HOME=$HOME PATH=$PATH WINEPREFIX=$HOME/pfx2 WINEDEBUG=err+all,fixme-all BOX64_LOG=0 BOX64_DYNAREC_STRONGMEM=1
+          export WINEDLLOVERRIDES="mscoree,mshtml=" LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 DISPLAY=:99
+          cd $PWD
+          Xvfb :99 -screen 0 640x480x16 >/dev/null 2>&1 &
+          sleep 2
+          s=\$(date +%s); timeout 600 box64 $W wineboot -i > boot.log 2>&1; echo "wineboot exit=\$? em \$((\$(date +%s)-s))s"
+          EXE=\$(find game -iname "\$(basename '${{ inputs.exe }}')" | head -1); echo "exe: \$EXE"
+          cd "\$(dirname "\$EXE")"
+          ( box64 $W "\$(basename "\$EXE")" > $PWD/run.log 2>&1; echo "game exit=\$?" >> $PWD/run.log ) &
+          sleep 12
+          for k in 1 2 3 4 5 6 7 8; do xdotool key Return; sleep 4; done
+          import -window root $PWD/shot_a.png || true
+          echo "--- uso de CPU (ps, %cpu acumulado por processo)"; ps -eo pid,pcpu,rss,etime,comm --sort=-pcpu | head -8
+          sleep 20
+          import -window root $PWD/shot_b.png || true
+          echo "--- PSS real somado (MB) de wine/box64/Xvfb"
+          tot=0; for p in \$(pgrep -f 'wine|box64|Xvfb|GAME'); do v=\$(awk '/^Pss:/{print \$2}' /proc/\$p/smaps_rollup 2>/dev/null); tot=\$((tot+\${v:-0})); done; echo "PSS total: \$((tot/1024)) MB"
+          cg=/sys/fs/cgroup/system.slice/ddnd.scope
+          echo "cgroup memory.peak: \$(( \$(cat \$cg/memory.peak 2>/dev/null || echo 0) / 1048576 )) MB"; echo "oom: \$(grep -E 'oom|max' \$cg/memory.events 2>/dev/null | tr '\\n' ' ')"
+          echo "--- processos"; pgrep -af 'wine|box64|GAME' | wc -l
+          echo "--- run.log (fim)"; tail -15 $PWD/run.log
+          wineserver -k 2>/dev/null; pkill Xvfb; true
+          SCRIPT
+          sed -i 's/^          //' t.sh; chmod +x t.sh
+          sudo systemd-run --scope --unit=ddnd --quiet -p MemoryMax=700M -p MemorySwapMax=0 --uid=$(id -u) --gid=$(id -g) taskset -c 0 ./t.sh
+          for f in shot_a.png shot_b.png; do
             [ -f "$f" ] || continue
             convert "$f" -colors 48 -define png:compression-level=9 /tmp/s.png
-            echo "SHOT-BEGIN $(basename $f) $(stat -c %s /tmp/s.png)"; base64 -w0 /tmp/s.png; echo; echo SHOT-END
+            echo "SHOT-BEGIN $f $(stat -c %s /tmp/s.png)"; base64 -w0 /tmp/s.png; echo; echo SHOT-END
           done
-          echo "--- processos (final)"; ps -eo pid,rss,etime,cmd | grep -i -E 'wine|box64|game' | grep -v grep | cut -c1-160
-          echo "--- RAM total do sistema usada"; free -m | head -2
-          cd ..
-          echo "--- boot.log (fim)"; tail -30 ../boot.log 2>/dev/null || tail -30 boot.log
-          echo "--- run.log (fim)"; tail -60 run.log
-          wineserver -k 2>/dev/null || true
 
       - uses: actions/upload-artifact@main
         if: always()
